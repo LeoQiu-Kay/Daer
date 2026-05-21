@@ -19,6 +19,33 @@ code/
 
 ## 安装
 
+### 方案 1：conda 环境（推荐）
+
+```powershell
+# 1) 创建并激活环境（Python 3.11，与 PyTorch 兼容性最稳）
+conda create -n daer python=3.11 -y
+conda activate daer
+
+# 2) 安装 PyTorch
+#    GPU（CUDA 12.1）：
+conda install pytorch pytorch-cuda=12.1 -c pytorch -c nvidia -y
+#    或 CPU-only：
+# conda install pytorch cpuonly -c pytorch -y
+
+# 3) 安装其他依赖
+cd D:\Data\Card\code
+pip install -r requirements.txt
+```
+
+验证：
+```powershell
+python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+后续每次使用前 `conda activate daer` 即可。
+
+### 方案 2：纯 pip
+
 ```powershell
 cd D:\Data\Card\code
 pip install -r requirements.txt
