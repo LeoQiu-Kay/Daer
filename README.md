@@ -7,11 +7,14 @@ Pointer-style 小型策略网络，监督学习专家的 CHU（出牌）/ CHI（
 ```
 code/
 ├── data.py            # JsonlDataset (byte-offset 惰性加载) + 特征化 + collate
-├── model.py           # CardEncoder + HistoryEncoder + StateEncoder + PointerPolicy
-├── train.py           # 训练入口
+├── model.py           # V2: 残差 Conv + 4 层 Transformer + dropout，默认 hidden=384
+├── train.py           # 训练入口；step/epoch 双层日志，每轮自动渲染 curves.png
 ├── eval.py            # 单独评估
+├── demo.py            # 单条样本推理可视化（控制台打印）
+├── visualize.py       # 训练曲线可视化（PNG，支持 --watch 持续刷新）
 ├── requirements.txt
-└── runs/bc/           # 训练产物：last.pt, best.pt, metrics.jsonl
+└── runs/bc/           # 训练产物：best.pt / last.pt / config.json /
+                       #          train_log.jsonl / metrics.jsonl / curves.png
 ```
 
 数据路径默认值（AutoDL 部署）：
@@ -61,19 +64,41 @@ CUDA / cuDNN 与 PyTorch 版本按本机 GPU 配置即可（CPU 也能跑，慢�
 
 ## 训练
 
-```powershell
-# 默认配置：bs=512, 10 epoch, hidden=256, AMP 自动开启
+```bash
+# 默认配置（V2）：hidden=384, bs=1024, lr=5e-4, 25 epoch, label_smoothing=0.05, AMP 自动开
 python train.py
 
-# 自定义
-python train.py --batch_size 1024 --epochs 15 --lr 3e-4 --workers 8
+# 进一步加大容量
+python train.py --hidden 512 --batch_size 2048 --epochs 30
 
-# Smoke / 调试（每个 split 只取前 5000 条）
-python train.py --limit 5000 --epochs 2 --workers 0 --batch_size 64
+# Smoke / 调试（每个 split 只取前 20000 条，2 epoch）
+python train.py --limit 20000 --epochs 2 --workers 0 --batch_size 256
 ```
 
-训练过程中每 `--log_every` 步打印一次 train loss / acc；每个 epoch 末跑一次 valid，
-按 valid acc 保留 `best.pt`，同时每轮覆盖写 `last.pt`，所有指标追加到 `metrics.jsonl`。
+训练过程：
+- 每 `--log_every` 步追加一条到 `runs/bc/train_log.jsonl`
+- 每 epoch 末跑 valid，追加到 `runs/bc/metrics.jsonl`
+- 按 valid acc 保留 `best.pt`，每轮覆盖写 `last.pt`，启动时把配置 dump 到 `config.json`
+- **每轮自动调用 `visualize.render`，写出 `runs/bc/curves.png`**
+- 默认开训前会清空 `train_log.jsonl / metrics.jsonl`，要保留旧记录加 `--keep_logs`
+
+## 可视化训练曲线
+
+`visualize.py` 把 `train_log.jsonl + metrics.jsonl` 渲染成一张 6 子图 PNG：
+train loss / train acc + lr / valid acc by phase / valid acc by source /
+CHI-vs-GUO 分解 / aux win BCE。
+
+```bash
+# 一次性渲染
+python visualize.py                                  # -> runs/bc/curves.png
+python visualize.py --run_dir runs/bc --out my.png
+
+# 持续刷新（在另一个终端运行，配合训练实时看曲线）
+python visualize.py --watch --interval 30
+```
+
+> 训练 `train.py` 本身在每个 epoch 末已经自动调用 `render`，所以最简单的看图方法
+> 就是用任意图片浏览器打开 `runs/bc/curves.png`，每个 epoch 末它会自动被覆盖更新。
 
 ## 评估
 
@@ -113,21 +138,37 @@ python demo.py --sample_index 1234
 1. **变长合法动作**：不固定动作空间。每个 `legal_actions[i]` 独立特征化，
    `state ⊕ action_i` 过 MLP 输出标量 logit，行内 mask + softmax。
    损失只对 `label_index` 求 CE，自然兼容 CHU(8–15 个候选) 与 CHI(2–6 个候选)。
-2. **状态编码**：
+2. **状态编码 V2**：
    - **Card 通道**：hand / 各家桌面牌组(PENG/CHI/ZHAO/LONG) / 各家弃牌 / pending / last_disc
-     拼成 `(B, 23, 20)` 张量，过 Conv1D，取 mean + max 双池化。
-   - **History**：近 16 步动作（类型 + 玩家相对位 + 涉及的牌 multi-hot）过小 Transformer，masked mean pool。
+     拼成 `(B, 23, 20)` 张量，过 **3 个残差 ConvBlock + GroupNorm**，取 mean + max 双池化。
+   - **History**：近 16 步动作（类型 + 玩家相对位 + 涉及的牌 multi-hot）过 **4 层 / 8 头 Transformer**，masked mean pool。
    - **Scalar**：相对位、phase、人数、庄家位、牌堆剩余、`game_rules.specialOptions` multi-hot 等。
+   - 所有 MLP 加 `Dropout(0.1)`。
 3. **玩家位归一化**：用 `player_order` 把所有玩家映射为 `self=0 / +1 / +2 / +3` 的相对位，2/3/4 人局共用一套槽位（多余的槽位填 0）。
-4. **加权 CE**：训练损失 `(nll * sample_weight).sum() / weight.sum()`。
+4. **加权 CE + label smoothing**：训练损失 `(nll * sample_weight).sum() / weight.sum()`，
+   `label_smoothing=0.05` 在合法动作上做 mask-safe 平滑（不会泄漏到非法动作）。
 5. **辅助任务**：从 `final_result` 取 `is_win` 做 BCE，权重 `--aux_weight 0.1`，提升数据效率。
+
+## 当前性能
+
+V1 (`hidden=256, 10 epoch`, ~1.77M params)：
+- valid acc 56.5%（CHU 49.0% / CHI 79.5%；CHI-vs-GUO 二分类 98.3%）
+
+V2 改动相对 V1：
+- 模型容量 ~1.77M → ~7–8M（hidden=384, 残差 conv, 4 层 history transformer）
+- batch_size 512 → 1024，lr 3e-4 → 5e-4，epochs 10 → 25，warmup 1000 → 2000
+- 新增 label smoothing 0.05、各 MLP dropout 0.1
+- 新增 Top-3 acc 指标、step 级日志、训练曲线自动渲染
+
+预期 CHU 49% → **60% 以上**。
 
 ## 常见问题
 
-- **OOM**：把 `--batch_size` 调小，或 `--hidden 192 --workers 0`。
-- **DataLoader 卡住（Windows）**：把 `--workers 0` 即可，单进程读取也不会成为瓶颈，因为 IO 本身较轻。
+- **OOM**：把 `--batch_size` 调小（512 / 256），或 `--hidden 256`。
+- **DataLoader 卡住（Windows）**：把 `--workers 0` 即可，单进程读取也不会成为瓶颈。
 - **bf16 不支持**：自动回退到 fp16；想完全关闭混合精度加 `--no_amp`。
-- **`is_valid_label=False` 的样本**：实测全集中均为 True，未做过滤。如确实碰到，建议预扫一遍把这些行排除。
+- **旧 ckpt 无法加载**：V2 架构与 V1 不兼容，需要重新训练（旧 `best.pt` 仅 demo.py 兼容用作展示）。
+- **`matplotlib` 渲染 Chinese 报错**：本仓库的曲线图用英文标签，避免 CJK 字体依赖。
 
 ## 下一步（如果继续往上做）
 
