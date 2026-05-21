@@ -82,6 +82,24 @@ python eval.py --ckpt runs/bc/best.pt --split test
 python eval.py --ckpt runs/bc/best.pt --split valid --limit 20000
 ```
 
+## 推理 / Demo
+
+加载 `best.pt`，在 test.jsonl 中抽样本逐条打印状态、合法动作概率与专家动作对比：
+
+```bash
+# 默认随机抽 5 条
+python demo.py
+
+# 指定 ckpt / 阶段 / 数量
+python demo.py --ckpt runs/bc/best.pt --phase CHI --n 8
+
+# 看指定下标的一条
+python demo.py --sample_index 1234
+```
+
+输出包含：手牌、各家桌面牌组、弃牌历史、最近 8 步动作、所有合法动作的模型概率（按降序排列，
+`★expert` 标专家选择、`←pred` 标模型选择）、最终是否一致。红字牌后加 `*` 标记。
+
 输出包含：
 - `acc` / `acc_weighted`（按 `sample_weight` 加权）
 - `per_phase`：CHU / CHI 各自 Top-1
