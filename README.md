@@ -14,8 +14,14 @@ code/
 └── runs/bc/           # 训练产物：last.pt, best.pt, metrics.jsonl
 ```
 
-数据路径相对本目录：`../qc_report_with_guo_balanced_12/splits/{train,valid,test}.jsonl`
-（默认值即此路径，不需要传 `--data_dir`）。
+数据路径默认值（AutoDL 部署）：
+`/root/autodl-tmp/luzhoudaer/qc_report_with_guo_balanced_12/splits/{train,valid,test}.jsonl`
+
+如本机数据在别处，用 `--data_dir` 覆盖：
+```powershell
+python train.py --data_dir D:\Data\Card\qc_report_with_guo_balanced_12\splits
+python eval.py  --ckpt runs/bc/best.pt --data_dir /path/to/splits --split test
+```
 
 ## 安装
 

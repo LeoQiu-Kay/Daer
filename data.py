@@ -17,7 +17,8 @@ from torch.utils.data import Dataset
 
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_DATA_DIR = (HERE / ".." / "qc_report_with_guo_balanced_12" / "splits").resolve()
+# AutoDL 部署位置；可通过 train.py / eval.py 的 --data_dir 覆盖
+DEFAULT_DATA_DIR = Path("/root/autodl-tmp/luzhoudaer/qc_report_with_guo_balanced_12/splits")
 
 NUM_CARDS = 20
 MAX_PLAYERS = 4
