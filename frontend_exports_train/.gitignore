@@ -1,0 +1,5 @@
+# 训练产物
+runs/
+_smoke/
+*.pt
+__pycache__/
